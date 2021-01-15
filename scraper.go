@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,17 +16,46 @@ import (
 )
 
 const (
-	baseUrl     = "https://www.autotrader.co.uk/car-search?postcode=E144AD&make=FORD&model=FOCUS&price-to=25000&include-delivery-option=on&body-type=Hatchback&transmission=Manual&year-from=2015&onesearchad=Used,Nearly%20New,New&advertising-location=at_cars&page="
-	outputFile  = "car_info.json"
+	baseUrl     = "https://www.autotrader.co.uk/car-search"
 	maxNumPages = 100
 )
 
 func main() {
-	cars := getAllCars()
+	queryOptions, outputFilename := parseArgs()
+	cars := getAllCars(queryOptions)
 	fmt.Printf("parsed info on %d cars\n", len(cars))
 
-	err := writeOutput(cars)
+	err := writeOutput(outputFilename, cars)
 	noErr(err)
+}
+
+func parseArgs() (*queryOptions, string) {
+	opts := new(queryOptions)
+
+	flag.StringVar(&opts.postcode, "postcode", "E144AD", "postcode for search")
+	flag.StringVar(&opts.make, "make", "FORD", "make of car")
+	flag.StringVar(&opts.model, "model", "FOCUS", "model of car")
+	flag.Uint64Var(&opts.priceTo, "price-to", 25000, "price upper limit")
+	flag.StringVar(&opts.bodyType, "body-type", "Hatchback", "body type")
+	flag.StringVar(&opts.transmission, "transmission", "Manual", "transmission type")
+	flag.Uint64Var(&opts.yearFrom, "year-from", 2015, "earliest year of manufacture")
+
+	var outputFile string
+	flag.StringVar(&outputFile, "output-filename", "car_info.json", "output filename")
+
+	flag.Parse()
+
+	return opts, outputFile
+}
+
+type queryOptions struct {
+	postcode     string
+	make         string
+	model        string
+	priceTo      uint64
+	bodyType     string
+	transmission string
+	yearFrom     uint64
 }
 
 type CarInfo struct {
@@ -34,11 +65,11 @@ type CarInfo struct {
 	EngineSize uint `json:"engine_size"` // CC
 }
 
-func getAllCars() []*CarInfo {
+func getAllCars(opts *queryOptions) []*CarInfo {
 	var allCars []*CarInfo
 
 	for i := uint64(0); i < maxNumPages; i++ {
-		cars, err := getPage(i)
+		cars, err := getPage(opts, i)
 		if err != nil {
 			fmt.Printf("error getting page %d: %s\n", i, err.Error())
 		}
@@ -48,20 +79,46 @@ func getAllCars() []*CarInfo {
 	return allCars
 }
 
-func writeOutput(cars []*CarInfo) error {
+func writeOutput(outputFilename string, cars []*CarInfo) error {
 	data, err := json.Marshal(cars)
 	if err != nil {
 		return err
 	}
 
-	return ioutil.WriteFile(outputFile, data, 0644)
+	return ioutil.WriteFile(outputFilename, data, 0644)
 }
 
-func getPage(pageNum uint64) ([]*CarInfo, error) {
-	url := baseUrl + strconv.FormatUint(pageNum, 10)
-	rsp, err := http.Get(url)
+func getPageUrl(opts *queryOptions, pageNum uint64) (*url.URL, error) {
+	u, err := url.Parse(baseUrl)
 	if err != nil {
-		return nil, errors.Wrapf(err, "while making HTTP request to %s", url)
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("postcode", opts.postcode)
+	q.Set("make", opts.make)
+	q.Set("model", opts.model)
+	q.Set("price-to", strconv.FormatUint(opts.priceTo, 10))
+	q.Set("include-delivery-option", "on")
+	q.Set("body-type", "Hatchback")
+	q.Set("transmission", opts.transmission)
+	q.Set("year-from", strconv.FormatUint(opts.yearFrom, 10))
+	q.Set("onesearchad", "Used,Nearly New,New")
+	q.Set("advertising-location", "at-cars")
+	q.Set("page", strconv.FormatUint(pageNum, 10))
+	u.RawQuery = q.Encode()
+
+	return u, nil
+}
+
+func getPage(opts *queryOptions, pageNum uint64) ([]*CarInfo, error) {
+	pageUrl, err := getPageUrl(opts, pageNum)
+	if err != nil {
+		return nil, errors.Wrap(err, "while getting URL for page")
+	}
+
+	rsp, err := http.Get(pageUrl.String())
+	if err != nil {
+		return nil, errors.Wrapf(err, "while making HTTP request to %s", pageUrl)
 	}
 
 	if rsp.StatusCode != http.StatusOK {
