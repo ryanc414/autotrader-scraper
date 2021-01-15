@@ -136,15 +136,17 @@ func getPage(opts *queryOptions, pageNum uint64) ([]*CarInfo, error) {
 	parseHTMLNode = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "div" {
 			for i := range n.Attr {
-				if n.Attr[i].Key == "class" && n.Attr[i].Val == "product-card-content" {
-					carInfo, err := parseCarNode(n)
-					if err != nil {
-						fmt.Println("error parsing car node:", err.Error())
-						return
-					}
-					cars = append(cars, carInfo)
+				if n.Attr[i].Key != "class" || n.Attr[i].Val != "product-card-content" {
+					continue
+				}
+
+				carInfo, err := parseCarNode(n)
+				if err != nil {
+					fmt.Println("error parsing car node:", err.Error())
 					return
 				}
+				cars = append(cars, carInfo)
+				return
 			}
 		}
 
@@ -180,24 +182,28 @@ func parseCarPrice(n *html.Node) (uint, error) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.ElementNode && c.Data == "div" {
 			for i := range c.Attr {
-				if c.Attr[i].Key == "class" && c.Attr[i].Val == "product-card-pricing__price" {
-					for cc := c.FirstChild; cc != nil; cc = cc.NextSibling {
-						if cc.Type == html.ElementNode && cc.Data == "span" {
-							rawPrice := cc.FirstChild.Data
-							matches := priceRe.FindStringSubmatch(rawPrice)
-							if len(matches) != 2 {
-								return 0, errors.Errorf("cannot parse price '%s'", rawPrice)
-							}
+				if c.Attr[i].Key != "class" || c.Attr[i].Val != "product-card-pricing__price" {
+					continue
+				}
 
-							replaced := strings.ReplaceAll(matches[1], ",", "")
-							val, err := strconv.ParseUint(replaced, 10, 32)
-							if err != nil {
-								return 0, errors.Wrapf(err, "while parsing %s as a uint", replaced)
-							}
-
-							return uint(val), nil
-						}
+				for cc := c.FirstChild; cc != nil; cc = cc.NextSibling {
+					if cc.Type != html.ElementNode || cc.Data != "span" {
+						continue
 					}
+
+					rawPrice := cc.FirstChild.Data
+					matches := priceRe.FindStringSubmatch(rawPrice)
+					if len(matches) != 2 {
+						return 0, errors.Errorf("cannot parse price '%s'", rawPrice)
+					}
+
+					replaced := strings.ReplaceAll(matches[1], ",", "")
+					val, err := strconv.ParseUint(replaced, 10, 32)
+					if err != nil {
+						return 0, errors.Wrapf(err, "while parsing %s as a uint", replaced)
+					}
+
+					return uint(val), nil
 				}
 			}
 		}
@@ -218,49 +224,52 @@ func parseCarSpecs(n *html.Node) (*CarInfo, error) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.ElementNode && c.Data == "ul" {
 			for i := range c.Attr {
-				if c.Attr[i].Key == "class" && c.Attr[i].Val == "listing-key-specs" {
-					i := 0
-					info := new(CarInfo)
+				if c.Attr[i].Key != "class" || c.Attr[i].Val != "listing-key-specs" {
+					continue
+				}
 
-					for c := c.FirstChild; c != nil; c = c.NextSibling {
-						if c.Type == html.ElementNode && c.Data == "li" {
-							cc := c.FirstChild
-							if cc == nil || cc.Type != html.TextNode {
-								return nil, errors.New("unexpected li node")
-							}
+				info := new(CarInfo)
 
-							switch i {
-							case 0:
-								year, err := parseYear(cc.Data)
-								if err != nil {
-									return nil, errors.Wrap(err, "while parsing year")
-								}
-								info.Year = year
+				for c := c.FirstChild; c != nil; c = c.NextSibling {
+					if c.Type != html.ElementNode && c.Data != "li" {
+						continue
+					}
 
-							case 2:
-								mileage, err := parseMileage(cc.Data)
-								if err != nil {
-									return nil, errors.Wrap(err, "while parsing mileage")
-								}
-								info.Mileage = mileage
+					cc := c.FirstChild
+					if cc == nil || cc.Type != html.TextNode {
+						return nil, errors.New("unexpected li node")
+					}
 
-							case 3:
-								engineSize, err := parseEngineSize(cc.Data)
-								if err != nil {
-									return nil, errors.Wrap(err, "while parsing engine size")
-								}
-								info.EngineSize = engineSize
-
-							default:
-								if i > 3 {
-									return info, nil
-								}
-							}
-
-							i += 1
+					if info.Year == 0 {
+						year, err := parseYear(cc.Data)
+						if err == nil {
+							info.Year = year
+							continue
 						}
 					}
+
+					if info.Mileage == 0 {
+						mileage, err := parseMileage(cc.Data)
+						if err == nil {
+							info.Mileage = mileage
+							continue
+						}
+					}
+
+					if info.EngineSize == 0 {
+						engineSize, err := parseEngineSize(cc.Data)
+						if err == nil {
+							info.EngineSize = engineSize
+							continue
+						}
+					}
+
+					if info.Year != 0 && info.Mileage != 0 && info.EngineSize != 0 {
+						return info, nil
+					}
 				}
+
+				return nil, errors.New("could not parse car info")
 			}
 		}
 
