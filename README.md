@@ -12,7 +12,9 @@ Run the scraper with `go run scraper.go`, if this is successful it will write
 the data to `car_info.json` in the current working dir. This data can then be
 analysed and displayed by running `pipenv run python plot.py`
 
-Currently the scaper is hard coded to fetch data on Ford Focus models made in
+By default the scraper will fetch data on Ford Focus models made in
 2015 or newer, with various other constraints (e.g. manual transmission only).
-This can be changed by editing the baseUrl constant in the scraper.go file. In
-future I might make this more configurable via CLI args or something.
+Make, model and other search details can be tweaked using the CLI flags, run
+`go run scraper.go -h` more more details. Similarly, the plot.py script assumes
+by default it is plotting data for 2015+ Ford Focuses but this can be overridden
+via CLI args (`pipenv run python plot.py -h` for the details there).
